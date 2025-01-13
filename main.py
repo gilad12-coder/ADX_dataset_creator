@@ -7,14 +7,26 @@ A script to:
 5. Sample proportionally from each cluster based on cluster size.
 6. Concatenate the final 'compressed' dataset.
 """
-import pandas as pd
-from clustering_module import compress_dataset, create_kusto_client
+
+from ADX_dataset_creation import compress_dataset, create_kusto_client
 from config import (
-    start_date, end_date, daily_sample_size, vector_column,
-    clustering_method, num_clusters, total_daily_samples,
-    use_pca, pca_components, min_cluster_size, n_neighbors_faiss,
-    cluster_url, tenant_id, database, table_name
+    start_date,
+    end_date,
+    daily_sample_size,
+    vector_column,
+    clustering_method,
+    num_clusters,
+    total_daily_samples,
+    use_pca,
+    pca_components,
+    min_cluster_size,
+    n_neighbors_faiss,
+    cluster_url,
+    tenant_id,
+    database,
+    table_name,
 )
+
 
 def main():
     """
@@ -27,7 +39,7 @@ def main():
     try:
         print("Creating Kusto client...")
         kusto_client = create_kusto_client(cluster_url, tenant_id)
-        
+
         print(f"Processing data from {start_date} to {end_date}")
         compressed_df = compress_dataset(
             kusto_client=kusto_client,
@@ -43,25 +55,26 @@ def main():
             use_pca=use_pca,
             pca_components=pca_components,
             min_cluster_size=min_cluster_size,
-            n_neighbors_faiss=n_neighbors_faiss
+            n_neighbors_faiss=n_neighbors_faiss,
         )
-        
+
         if compressed_df.empty:
             print("Warning: Compressed dataset is empty!")
             return
-            
+
         print(f"Compressed dataset shape: {compressed_df.shape}")
         print("\nSample of compressed dataset:")
         print(compressed_df.head())
-        
+
         output_file = "compressed_data.pkl"
         print(f"\nSaving compressed dataset to {output_file}")
         compressed_df.to_pickle(output_file)
         print("Done!")
-        
+
     except Exception as e:
         print(f"Error occurred: {str(e)}")
         raise
+
 
 if __name__ == "__main__":
     main()

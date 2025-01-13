@@ -1,5 +1,4 @@
 import datetime
-from typing import List, Optional, Tuple
 from dateutil import rrule
 import numpy as np
 import pandas as pd
@@ -7,8 +6,13 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 import hdbscan
 import faiss
-from azure.kusto.data import KustoClient, KustoConnectionStringBuilder, ClientRequestProperties
+from azure.kusto.data import (
+    KustoClient,
+    KustoConnectionStringBuilder,
+    ClientRequestProperties,
+)
 from azure.kusto.data.helpers import dataframe_from_result_table
+
 
 def create_kusto_client(cluster_url: str, tenant_id: str) -> KustoClient:
     """
@@ -17,7 +21,7 @@ def create_kusto_client(cluster_url: str, tenant_id: str) -> KustoClient:
     Parameters
     ----------
     cluster_url : str
-        The URL of the Azure Data Explorer cluster 
+        The URL of the Azure Data Explorer cluster
         (e.g. "https://<clusterName>.<region>.kusto.windows.net")
     tenant_id : str
         The Azure tenant ID used for authentication.
@@ -27,11 +31,19 @@ def create_kusto_client(cluster_url: str, tenant_id: str) -> KustoClient:
     KustoClient
         Authenticated KustoClient object to run queries.
     """
-    kcsb = KustoConnectionStringBuilder.with_aad_device_authentication(cluster_url, authority_id=tenant_id)
+    kcsb = KustoConnectionStringBuilder.with_aad_device_authentication(
+        cluster_url, authority_id=tenant_id
+    )
     return KustoClient(kcsb)
 
-def fetch_data_for_day(kusto_client: KustoClient, database: str, table_name: str, 
-                      day: datetime.date, random_sample_size: int) -> pd.DataFrame:
+
+def fetch_data_for_day(
+    kusto_client: KustoClient,
+    database: str,
+    table_name: str,
+    day: datetime.date,
+    random_sample_size: int,
+) -> pd.DataFrame:
     """
     Fetches a random sample of data from Azure Data Explorer for a specific day.
 
@@ -61,8 +73,10 @@ def fetch_data_for_day(kusto_client: KustoClient, database: str, table_name: str
     response = kusto_client.execute(database, query, properties=properties)
     return dataframe_from_result_table(response.primary_results[0])
 
-def cluster_data_kmeans(vectors: np.ndarray, num_clusters: int = 5, 
-                       random_state: int = 42) -> np.ndarray:
+
+def cluster_data_kmeans(
+    vectors: np.ndarray, num_clusters: int = 5, random_state: int = 42
+) -> np.ndarray:
     """
     Clusters data using K-Means.
 
@@ -83,8 +97,10 @@ def cluster_data_kmeans(vectors: np.ndarray, num_clusters: int = 5,
     kmeans = KMeans(n_clusters=num_clusters, random_state=random_state)
     return kmeans.fit_predict(vectors)
 
-def cluster_data_hdbscan_faiss(vectors: np.ndarray, min_cluster_size: int = 5,
-                              n_neighbors: int = 15) -> np.ndarray:
+
+def cluster_data_hdbscan_faiss(
+    vectors: np.ndarray, min_cluster_size: int = 5, n_neighbors: int = 15
+) -> np.ndarray:
     """
     Clusters data using HDBSCAN, using FAISS to accelerate neighbor searches.
     This function constructs a KNN distance graph and passes it in 'precomputed' mode.
@@ -101,7 +117,7 @@ def cluster_data_hdbscan_faiss(vectors: np.ndarray, min_cluster_size: int = 5,
     Returns
     -------
     np.ndarray
-        1D array of cluster labels of length n_samples, 
+        1D array of cluster labels of length n_samples,
         or -1 for outliers (noise).
     """
     n_samples, n_dim = vectors.shape
@@ -117,17 +133,25 @@ def cluster_data_hdbscan_faiss(vectors: np.ndarray, min_cluster_size: int = 5,
             dist = distances[i, j_idx]
             distance_matrix[i, j] = dist
             distance_matrix[j, i] = dist
-    clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size=min_cluster_size)
+    clusterer = hdbscan.HDBSCAN(metric="precomputed", min_cluster_size=min_cluster_size)
     return clusterer.fit_predict(distance_matrix)
 
-def cluster_and_sample(df: pd.DataFrame, vector_column: str, total_samples: int = 1000,
-                      clustering_method: str = 'kmeans', num_clusters: int = 5,
-                      use_pca: bool = True, pca_components: int = 50,
-                      min_cluster_size: int = 5, n_neighbors_faiss: int = 15) -> pd.DataFrame:
+
+def cluster_and_sample(
+    df: pd.DataFrame,
+    vector_column: str,
+    total_samples: int = 1000,
+    clustering_method: str = "kmeans",
+    num_clusters: int = 5,
+    use_pca: bool = True,
+    pca_components: int = 50,
+    min_cluster_size: int = 5,
+    n_neighbors_faiss: int = 15,
+) -> pd.DataFrame:
     """
     Clusters the data based on a vector column using either K-Means or
     HDBSCAN (accelerated by FAISS), then samples rows proportionally to cluster sizes.
-    
+
     Parameters
     ----------
     df : pd.DataFrame
@@ -151,29 +175,30 @@ def cluster_and_sample(df: pd.DataFrame, vector_column: str, total_samples: int 
     n_neighbors_faiss : int, optional
         Number of neighbors to use when building the FAISS distance graph for HDBSCAN.
         Default is 15.
-        
+
     Returns
     -------
     pd.DataFrame
         A DataFrame containing samples from each cluster proportional to cluster sizes.
     """
     vectors = np.array(df[vector_column].tolist())
-    if use_pca and pca_components > 0 and pca_components < vectors.shape[1]:
+    if use_pca and 0 < pca_components < vectors.shape[1]:
         pca = PCA(n_components=pca_components, random_state=42)
         vectors = pca.fit_transform(vectors)
-    if clustering_method.lower() == 'kmeans':
+    if clustering_method.lower() == "kmeans":
         cluster_labels = cluster_data_kmeans(vectors, num_clusters=num_clusters)
-    elif clustering_method.lower() == 'hdbscan':
-        cluster_labels = cluster_data_hdbscan_faiss(vectors, min_cluster_size=min_cluster_size,
-                                                  n_neighbors=n_neighbors_faiss)
+    elif clustering_method.lower() == "hdbscan":
+        cluster_labels = cluster_data_hdbscan_faiss(
+            vectors, min_cluster_size=min_cluster_size, n_neighbors=n_neighbors_faiss
+        )
     else:
         raise ValueError("clustering_method must be either 'kmeans' or 'hdbscan'.")
-    df['cluster_label'] = cluster_labels
-    if clustering_method.lower() == 'hdbscan':
-        df = df[df['cluster_label'] != -1]
+    df["cluster_label"] = cluster_labels
+    if clustering_method.lower() == "hdbscan":
+        df = df[df["cluster_label"] != -1]
     if df.empty:
         return df
-    cluster_sizes = df['cluster_label'].value_counts()
+    cluster_sizes = df["cluster_label"].value_counts()
     total_points = cluster_sizes.sum()
     cluster_proportions = cluster_sizes / total_points
     samples_per_cluster = (cluster_proportions * total_samples).round().astype(int)
@@ -184,21 +209,32 @@ def cluster_and_sample(df: pd.DataFrame, vector_column: str, total_samples: int 
             samples_per_cluster[idx] += np.sign(diff)
     final_rows = []
     for cluster_id, n_samples in samples_per_cluster.items():
-        cluster_df = df[df['cluster_label'] == cluster_id]
+        cluster_df = df[df["cluster_label"] == cluster_id]
         if len(cluster_df) <= n_samples:
             final_rows.append(cluster_df)
         else:
             final_rows.append(cluster_df.sample(n_samples, random_state=42))
     final_df = pd.concat(final_rows, ignore_index=True)
-    final_df.drop(columns=['cluster_label'], inplace=True)
+    final_df.drop(columns=["cluster_label"], inplace=True)
     return final_df
 
-def compress_dataset(kusto_client: KustoClient, database: str, table_name: str,
-                    start_date: datetime.date, end_date: datetime.date,
-                    daily_sample_size: int, vector_column: str,
-                    total_daily_samples: int, clustering_method: str,
-                    num_clusters: int, use_pca: bool, pca_components: int,
-                    min_cluster_size: int, n_neighbors_faiss: int) -> pd.DataFrame:
+
+def compress_dataset(
+    kusto_client: KustoClient,
+    database: str,
+    table_name: str,
+    start_date: datetime.date,
+    end_date: datetime.date,
+    daily_sample_size: int,
+    vector_column: str,
+    total_daily_samples: int,
+    clustering_method: str,
+    num_clusters: int,
+    use_pca: bool,
+    pca_components: int,
+    min_cluster_size: int,
+    n_neighbors_faiss: int,
+) -> pd.DataFrame:
     """
     Fetches data from ADX between start_date and end_date, day by day.
     Clusters the daily data (via K-Means or HDBSCAN+FAISS), samples proportionally
@@ -245,24 +281,36 @@ def compress_dataset(kusto_client: KustoClient, database: str, table_name: str,
     for dt in rrule.rrule(rrule.DAILY, dtstart=start_date, until=end_date):
         day = dt.date()
         print(f"Processing day: {day.isoformat()}")
-        df_day = fetch_data_for_day(kusto_client=kusto_client, database=database,
-                                  table_name=table_name, day=day,
-                                  random_sample_size=daily_sample_size)
+        df_day = fetch_data_for_day(
+            kusto_client=kusto_client,
+            database=database,
+            table_name=table_name,
+            day=day,
+            random_sample_size=daily_sample_size,
+        )
         if df_day.empty:
             print(f"No data returned for {day.isoformat()}. Skipping.")
             continue
-        df_clustered = cluster_and_sample(df=df_day, vector_column=vector_column,
-                                        total_samples=total_daily_samples,
-                                        clustering_method=clustering_method,
-                                        num_clusters=num_clusters, use_pca=use_pca,
-                                        pca_components=pca_components,
-                                        min_cluster_size=min_cluster_size,
-                                        n_neighbors_faiss=n_neighbors_faiss)
+        df_clustered = cluster_and_sample(
+            df=df_day,
+            vector_column=vector_column,
+            total_samples=total_daily_samples,
+            clustering_method=clustering_method,
+            num_clusters=num_clusters,
+            use_pca=use_pca,
+            pca_components=pca_components,
+            min_cluster_size=min_cluster_size,
+            n_neighbors_faiss=n_neighbors_faiss,
+        )
         if df_clustered.empty:
-            print(f"All data for {day.isoformat()} was outlier/no data post-clustering.")
+            print(
+                f"All data for {day.isoformat()} was outlier/no data post-clustering."
+            )
             continue
         final_data.append(df_clustered)
     if not final_data:
-        print("No data was collected over the entire date range. Returning empty DataFrame.")
+        print(
+            "No data was collected over the entire date range. Returning empty DataFrame."
+        )
         return pd.DataFrame()
     return pd.concat(final_data, ignore_index=True)
