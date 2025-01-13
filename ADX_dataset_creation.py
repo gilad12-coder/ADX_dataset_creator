@@ -183,9 +183,9 @@ def cluster_data_hdbscan_faiss(
 def cluster_and_sample(
     df: pd.DataFrame,
     vector_column: str,
+    total_samples: int = 1000,
     clustering_method: str = 'kmeans',
     num_clusters: int = 5,
-    samples_per_cluster: int = 50,
     use_pca: bool = True,
     pca_components: int = 50,
     min_cluster_size: int = 5,
@@ -193,9 +193,8 @@ def cluster_and_sample(
 ) -> pd.DataFrame:
     """
     Clusters the data based on a vector column using either K-Means or
-    HDBSCAN (accelerated by FAISS), then samples an equal number of rows
-    from each cluster.
-
+    HDBSCAN (accelerated by FAISS), then samples rows proportionally to cluster sizes.
+    
     Parameters
     ----------
     df : pd.DataFrame
@@ -203,13 +202,13 @@ def cluster_and_sample(
     vector_column : str
         The column name which contains the vector data. Each entry in this column
         should be a list or array of floats.
+    total_samples : int, optional
+        Total number of samples to return across all clusters. Default is 1000.
     clustering_method : str, optional
         Which clustering algorithm to use, 'kmeans' or 'hdbscan'. Default is 'kmeans'.
     num_clusters : int, optional
         The number of clusters to use in K-Means. Ignored if clustering_method='hdbscan'.
         Default is 5.
-    samples_per_cluster : int, optional
-        How many rows to sample from each cluster. Default is 50.
     use_pca : bool, optional
         Whether to use PCA to reduce dimensionality before clustering. Default is True.
     pca_components : int, optional
@@ -219,24 +218,23 @@ def cluster_and_sample(
     n_neighbors_faiss : int, optional
         Number of neighbors to use when building the FAISS distance graph for HDBSCAN.
         Default is 15.
-
+        
     Returns
     -------
     pd.DataFrame
-        A DataFrame that contains an equal number of rows from each cluster.
+        A DataFrame containing samples from each cluster proportional to cluster sizes.
     """
     # Convert vectors from e.g. string or list to numpy array
     vectors = np.array(df[vector_column].tolist())
-
+    
     # Optional PCA dimensionality reduction
     if use_pca and pca_components > 0 and pca_components < vectors.shape[1]:
         pca = PCA(n_components=pca_components, random_state=42)
         vectors = pca.fit_transform(vectors)
-
+    
     # Perform clustering
     if clustering_method.lower() == 'kmeans':
         cluster_labels = cluster_data_kmeans(vectors, num_clusters=num_clusters)
-
     elif clustering_method.lower() == 'hdbscan':
         cluster_labels = cluster_data_hdbscan_faiss(
             vectors,
@@ -245,33 +243,50 @@ def cluster_and_sample(
         )
     else:
         raise ValueError("clustering_method must be either 'kmeans' or 'hdbscan'.")
-
+        
     df['cluster_label'] = cluster_labels
-
+    
     # HDBSCAN can produce -1 for outliers
     if clustering_method.lower() == 'hdbscan':
         # Filter out outliers if cluster_label == -1
         df = df[df['cluster_label'] != -1]
-
+        
     if df.empty:
         return df  # No data left after outlier removal or no valid clusters
-
-    # Collect an equal sample of data from each cluster
+    
+    # Calculate cluster sizes and proportions
+    cluster_sizes = df['cluster_label'].value_counts()
+    total_points = cluster_sizes.sum()
+    cluster_proportions = cluster_sizes / total_points
+    
+    # Calculate number of samples per cluster
+    samples_per_cluster = (cluster_proportions * total_samples).round().astype(int)
+    
+    # Adjust for rounding errors to ensure we get exactly total_samples
+    diff = total_samples - samples_per_cluster.sum()
+    if diff != 0:
+        # Add/subtract the difference from the largest cluster(s)
+        indices_to_adjust = cluster_sizes.nlargest(abs(diff)).index
+        for idx in indices_to_adjust:
+            samples_per_cluster[idx] += np.sign(diff)
+    
+    # Collect proportional samples from each cluster
     final_rows = []
-    unique_clusters = sorted(df['cluster_label'].unique())
-    for cluster_id in unique_clusters:
+    for cluster_id, n_samples in samples_per_cluster.items():
         cluster_df = df[df['cluster_label'] == cluster_id]
         
-        if len(cluster_df) <= samples_per_cluster:
+        # If cluster is smaller than desired samples, take all points
+        if len(cluster_df) <= n_samples:
             final_rows.append(cluster_df)
         else:
-            final_rows.append(cluster_df.sample(samples_per_cluster, random_state=42))
-
+            final_rows.append(cluster_df.sample(n_samples, random_state=42))
+    
     # Concatenate samples
     final_df = pd.concat(final_rows, ignore_index=True)
+    
     # Drop the temporary cluster_label column
     final_df.drop(columns=['cluster_label'], inplace=True)
-
+    
     return final_df
 
 
